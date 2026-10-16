@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   };
 
   try {
-    // ১. ইনপুট URL থেকে ইমেজ ডাউনলোড করা
+    // ১. ইনপুট URL থেকে ছবি ডাউনলোড
     const imageResponse = await fetch(url);
     if (!imageResponse.ok) {
       return res.status(400).json({ error: 'Failed to fetch image from provided URL' });
@@ -29,12 +29,12 @@ export default async function handler(req, res) {
     const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
 
     // ---------------------------------------------------------
-    // STEP 1: Start Task (v1/start)
+    // STEP 1: Get Task & Assigned Server (api.iloveimg.com/v1/start)
     // ---------------------------------------------------------
     const startForm = new FormData();
     startForm.append('tool', 'removebackground');
 
-    const startRes = await fetch('https://api6g.iloveimg.com/v1/start', {
+    const startRes = await fetch('https://api.iloveimg.com/v1/start/removebackground', {
       method: 'POST',
       headers: {
         ...commonHeaders,
@@ -43,15 +43,32 @@ export default async function handler(req, res) {
       body: startForm,
     });
 
-    const startData = await startRes.json();
+    // যদি start/removebackground কাজ না করে তবে ব্যাকআপ হিসেবে v1/start
+    let startData;
+    if (startRes.ok) {
+      startData = await startRes.json();
+    } else {
+      const fallbackStart = await fetch('https://api.iloveimg.com/v1/start', {
+        method: 'POST',
+        headers: {
+          ...commonHeaders,
+          ...startForm.getHeaders(),
+        },
+        body: startForm,
+      });
+      startData = await fallbackStart.json();
+    }
+
     const task = startData.task;
+    // অ্যাসাইন করা সার্ভার (যেমন api6g.iloveimg.com) বা ডিফল্ট হোস্ট
+    const serverHost = startData.server ? `https://${startData.server}` : 'https://api.iloveimg.com';
 
     if (!task) {
       return res.status(500).json({ error: 'Failed to create task on iloveimg', details: startData });
     }
 
     // ---------------------------------------------------------
-    // STEP 2: Upload Image with Task ID (v1/upload)
+    // STEP 2: Upload Image to Assigned Server (v1/upload)
     // ---------------------------------------------------------
     const uploadForm = new FormData();
     uploadForm.append('task', task);
@@ -63,7 +80,7 @@ export default async function handler(req, res) {
       contentType: contentType,
     });
 
-    const uploadRes = await fetch('https://api6g.iloveimg.com/v1/upload', {
+    const uploadRes = await fetch(`${serverHost}/v1/upload`, {
       method: 'POST',
       headers: {
         ...commonHeaders,
@@ -92,7 +109,7 @@ export default async function handler(req, res) {
     processForm.append('files[0][server_filename]', serverFileName);
     processForm.append('files[0][filename]', 'image.jpg');
 
-    const processRes = await fetch('https://api6g.iloveimg.com/v1/removebackground', {
+    const processRes = await fetch(`${serverHost}/v1/removebackground`, {
       method: 'POST',
       headers: {
         ...commonHeaders,
@@ -107,7 +124,7 @@ export default async function handler(req, res) {
       return res.status(processRes.status).json({ error: 'Background removal processing failed', details: errText });
     }
 
-    // ৪. ব্যাকগ্রাউন্ড রিমুভ করা ইমেজ বাইনারি আকারে রিটার্ন করা
+    // ৪. ব্যাকগ্রাউন্ড রিমুভ করা ইমেজ রিটার্ন করা
     const resultBuffer = await processRes.buffer();
 
     res.setHeader('Content-Type', 'image/png');
